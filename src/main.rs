@@ -39,17 +39,16 @@ impl AudioVisualizer {
     }
 
     fn play_audio(&self, audio_file: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let (_stream, stream_handle) = OutputStream::try_default()?;
-        let sink = Sink::try_new(&stream_handle)?;
-        let file = File::open(audio_file)?;
-        let source = Decoder::new(BufReader::new(file))?;
-        sink.append(source);
-        sink.play();
-
+        let audio_file = audio_file.to_string();
         thread::spawn(move || {
+            let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+            let sink = Sink::try_new(&stream_handle).unwrap();
+            let file = File::open(audio_file).unwrap();
+            let source = Decoder::new(BufReader::new(file)).unwrap();
+            sink.append(source);
+            sink.play();
             sink.sleep_until_end();
         });
-
         Ok(())
     }
 }
@@ -84,10 +83,20 @@ impl eframe::App for VisualizerApp {
         }
         
         egui::CentralPanel::default().show(ctx, |ui| {
-            let points: Vec<egui::Pos2> = self.spectrum.iter().enumerate()
-                .map(|(i, &y)| egui::Pos2::new(i as f32, 600.0 - y * 20.0))
-                .collect();
-            ui.painter().add(egui::epaint::Shape::line(points, egui::Stroke::new(1.5, egui::Color32::GREEN)));
+            let bar_width = 5.0;
+            // let gap = 1.0;
+            for (i, &y) in self.spectrum.iter().enumerate().step_by(1) {
+                let x_pos = i as f32 * (5.0 + 2.0);
+                let height = y * 60.0;
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::Pos2::new(x_pos, 600.0 - height),
+                        egui::vec2(bar_width, height),
+                    ),
+                    0.0,
+                    egui::Color32::RED,
+                );
+            }
         });
 
         ctx.request_repaint();
