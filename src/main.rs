@@ -1,13 +1,16 @@
 use clap::Parser;
+use eframe::egui;
 use hound::WavReader;
 use realfft::RealFftPlanner;
 use rodio::{Decoder, OutputStream, Sink};
 use rustfft::num_complex::Complex;
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::thread;
-use eframe::egui;
 
 #[derive(Parser, Debug)]
 #[clap(about = "Audio visualizer that displays frequency spectrum")]
@@ -19,14 +22,15 @@ struct Args {
 struct AudioVisualizer {
     audio_data: Vec<f32>,
     block_size: usize,
-    current_position: Arc<Mutex<usize>>,
+    current_position: AtomicUsize,
 }
 
 impl AudioVisualizer {
     fn new(audio_file: &str, block_size: usize) -> Result<Self, Box<dyn std::error::Error>> {
         let mut reader = WavReader::open(audio_file)?;
 
-        let audio_data: Vec<f32> = reader.samples::<i16>()
+        let audio_data: Vec<f32> = reader
+            .samples::<i16>()
             .filter_map(Result::ok)
             .map(|s| s as f32 / 32768.0)
             .collect();
@@ -34,7 +38,7 @@ impl AudioVisualizer {
         Ok(AudioVisualizer {
             audio_data,
             block_size,
-            current_position: Arc::new(Mutex::new(0)),
+            current_position: AtomicUsize::new(0),
         })
     }
 
@@ -74,14 +78,22 @@ impl eframe::App for VisualizerApp {
         let mut input_buffer = vec![0.0f32; self.visualizer.block_size];
         let mut spectrum_output = vec![Complex::new(0.0, 0.0); self.visualizer.block_size / 2 + 1];
 
-        let mut pos = self.visualizer.current_position.lock().unwrap();
-        if *pos + self.visualizer.block_size <= self.visualizer.audio_data.len() {
-            input_buffer.copy_from_slice(&self.visualizer.audio_data[*pos..*pos + self.visualizer.block_size]);
-            *pos += self.visualizer.block_size;
+        let pos = self.visualizer.current_position.load(Ordering::Relaxed);
+        if pos + self.visualizer.block_size <= self.visualizer.audio_data.len() {
+            input_buffer.copy_from_slice(
+                &self.visualizer.audio_data[pos..pos + self.visualizer.block_size],
+            );
+            // We don't need to CAS because we're the only writer.
+            self.visualizer
+                .current_position
+                .store(pos + self.visualizer.block_size, Ordering::Relaxed);
             r2c.process(&mut input_buffer, &mut spectrum_output).ok();
-            self.spectrum = spectrum_output.iter().map(|c| (c.norm() + 1.0).ln()).collect();
+            self.spectrum = spectrum_output
+                .iter()
+                .map(|c| (c.norm() + 1.0).ln())
+                .collect();
         }
-        
+
         egui::CentralPanel::default().show(ctx, |ui| {
             let bar_width = 5.0;
             // let gap = 1.0;
@@ -107,8 +119,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let visualizer = Arc::new(AudioVisualizer::new(&args.audio_file, 2048)?);
     visualizer.play_audio(&args.audio_file)?;
-    
+
     let options = eframe::NativeOptions::default();
-    eframe::run_native("Audio Visualizer", options, Box::new(|_| Box::new(VisualizerApp::new(visualizer))))?;
+    eframe::run_native(
+        "Audio Visualizer",
+        options,
+        Box::new(|_| Box::new(VisualizerApp::new(visualizer))),
+    )?;
     Ok(())
 }
