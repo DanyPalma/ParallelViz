@@ -17,6 +17,7 @@ struct Args {
     audio_file: String,
 }
 
+#[allow(dead_code)]
 fn rust_fft(input: &mut [Complex<f32>]) {
     let mut planner = FftPlanner::<f32>::new();
     let f = planner.plan_fft_forward(input.len());
@@ -24,9 +25,38 @@ fn rust_fft(input: &mut [Complex<f32>]) {
     f.process(input)
 }
 
+#[allow(dead_code)]
+fn our_fft(input: &mut [Complex<f32>]) {
+    let len = input.len();
+    if len == 1 {
+        return;
+    }
+    assert!(len.is_power_of_two());
+
+    let mut evens = input.iter().step_by(2).copied().collect::<Vec<_>>();
+    let mut odds = input.iter().skip(1).step_by(2).copied().collect::<Vec<_>>();
+
+    our_fft(&mut evens);
+    our_fft(&mut odds);
+
+    let principle_angle = core::f32::consts::TAU / len as f32;
+    let principle_root = Complex::<f32> {
+        re: principle_angle.cos(),
+        im: principle_angle.sin(),
+    };
+    let mut cur_root = Complex::<f32> { re: 1.0, im: 0.0 };
+
+    for i in 0..len / 2 {
+        input[i] = evens[i] + cur_root * odds[i];
+        input[i + len / 2] = evens[i] - cur_root * odds[i];
+
+        cur_root *= principle_root;
+    }
+}
+
 // swap out backing fft impl
 fn fft(input: &mut [Complex<f32>]) {
-    rust_fft(input);
+    our_fft(input);
 }
 
 struct AudioVisualizer {
