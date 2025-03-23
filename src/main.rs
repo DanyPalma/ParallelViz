@@ -4,12 +4,10 @@ use hound::WavReader;
 use realfft::RealFftPlanner;
 use rodio::{Decoder, OutputStream, Sink};
 use rustfft::num_complex::Complex;
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use std::rc::Rc;
 use std::thread;
 
 #[derive(Parser, Debug)]
@@ -22,7 +20,7 @@ struct Args {
 struct AudioVisualizer {
     audio_data: Vec<f32>,
     block_size: usize,
-    current_position: AtomicUsize,
+    current_position: usize,
 }
 
 impl AudioVisualizer {
@@ -38,7 +36,7 @@ impl AudioVisualizer {
         Ok(AudioVisualizer {
             audio_data,
             block_size,
-            current_position: AtomicUsize::new(0),
+            current_position: 0,
         })
     }
 
@@ -58,35 +56,34 @@ impl AudioVisualizer {
 }
 
 struct VisualizerApp {
-    visualizer: Arc<AudioVisualizer>,
+    visualizer: Rc<RefCell<AudioVisualizer>>,
     spectrum: Vec<f32>,
 }
 
 impl VisualizerApp {
-    fn new(visualizer: Arc<AudioVisualizer>) -> Self {
+    fn new(visualizer: Rc<RefCell<AudioVisualizer>>) -> Self {
         Self {
             visualizer: visualizer.clone(),
-            spectrum: vec![0.0; visualizer.block_size / 2 + 1],
+            spectrum: vec![0.0; visualizer.borrow().block_size / 2 + 1],
         }
     }
 }
 
 impl eframe::App for VisualizerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut planner = RealFftPlanner::<f32>::new();
-        let r2c = planner.plan_fft_forward(self.visualizer.block_size);
-        let mut input_buffer = vec![0.0f32; self.visualizer.block_size];
-        let mut spectrum_output = vec![Complex::new(0.0, 0.0); self.visualizer.block_size / 2 + 1];
+        let mut visualizer = self.visualizer.borrow_mut();
 
-        let pos = self.visualizer.current_position.load(Ordering::Relaxed);
-        if pos + self.visualizer.block_size <= self.visualizer.audio_data.len() {
+        let mut planner = RealFftPlanner::<f32>::new();
+        let r2c = planner.plan_fft_forward(visualizer.block_size);
+        let mut input_buffer = vec![0.0f32; visualizer.block_size];
+        let mut spectrum_output = vec![Complex::new(0.0, 0.0); visualizer.block_size / 2 + 1];
+
+        if visualizer.current_position + visualizer.block_size <= visualizer.audio_data.len() {
             input_buffer.copy_from_slice(
-                &self.visualizer.audio_data[pos..pos + self.visualizer.block_size],
+                &visualizer.audio_data[visualizer.current_position
+                    ..visualizer.current_position + visualizer.block_size],
             );
-            // We don't need to CAS because we're the only writer.
-            self.visualizer
-                .current_position
-                .store(pos + self.visualizer.block_size, Ordering::Relaxed);
+            visualizer.current_position += visualizer.block_size;
             r2c.process(&mut input_buffer, &mut spectrum_output).ok();
             self.spectrum = spectrum_output
                 .iter()
@@ -117,14 +114,14 @@ impl eframe::App for VisualizerApp {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let visualizer = Arc::new(AudioVisualizer::new(&args.audio_file, 2048)?);
+    let visualizer = AudioVisualizer::new(&args.audio_file, 2048)?;
     visualizer.play_audio(&args.audio_file)?;
 
     let options = eframe::NativeOptions::default();
     eframe::run_native(
         "Audio Visualizer",
         options,
-        Box::new(|_| Box::new(VisualizerApp::new(visualizer))),
+        Box::new(|_| Box::new(VisualizerApp::new(Rc::new(RefCell::new(visualizer))))),
     )?;
     Ok(())
 }
