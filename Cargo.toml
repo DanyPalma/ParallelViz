@@ -6,8 +6,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 hound = "3"
-realfft = "3"
-rodio = "0.17"
 rustfft = "6"
+rodio = "0.17"
 eframe = "0.27"
 egui = "0.27"

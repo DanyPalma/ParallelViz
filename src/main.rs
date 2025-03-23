@@ -1,9 +1,9 @@
 use clap::Parser;
 use eframe::egui;
 use hound::WavReader;
-use realfft::RealFftPlanner;
 use rodio::{Decoder, OutputStream, Sink};
 use rustfft::num_complex::Complex;
+use rustfft::FftPlanner;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::BufReader;
@@ -15,6 +15,18 @@ use std::thread;
 struct Args {
     #[clap(value_parser)]
     audio_file: String,
+}
+
+fn rust_fft(input: &mut [Complex<f32>]) {
+    let mut planner = FftPlanner::<f32>::new();
+    let f = planner.plan_fft_forward(input.len());
+
+    f.process(input)
+}
+
+// swap out backing fft impl
+fn fft(input: &mut [Complex<f32>]) {
+    rust_fft(input);
 }
 
 struct AudioVisualizer {
@@ -73,22 +85,17 @@ impl eframe::App for VisualizerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut visualizer = self.visualizer.borrow_mut();
 
-        let mut planner = RealFftPlanner::<f32>::new();
-        let r2c = planner.plan_fft_forward(visualizer.block_size);
-        let mut input_buffer = vec![0.0f32; visualizer.block_size];
-        let mut spectrum_output = vec![Complex::new(0.0, 0.0); visualizer.block_size / 2 + 1];
-
         if visualizer.current_position + visualizer.block_size <= visualizer.audio_data.len() {
-            input_buffer.copy_from_slice(
-                &visualizer.audio_data[visualizer.current_position
-                    ..visualizer.current_position + visualizer.block_size],
-            );
-            visualizer.current_position += visualizer.block_size;
-            r2c.process(&mut input_buffer, &mut spectrum_output).ok();
-            self.spectrum = spectrum_output
+            let mut input_buffer = visualizer.audio_data
+                [visualizer.current_position..visualizer.current_position + visualizer.block_size]
                 .iter()
-                .map(|c| (c.norm() + 1.0).ln())
-                .collect();
+                .map(|x| Complex::<f32> { re: *x, im: 0.0 })
+                .collect::<Vec<_>>();
+            visualizer.current_position += visualizer.block_size;
+
+            fft(&mut input_buffer);
+
+            self.spectrum = input_buffer.iter().map(|c| (c.norm() + 1.0).ln()).collect();
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
