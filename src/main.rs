@@ -32,8 +32,8 @@ fn our_fft(input: &mut [Complex<f32>]) {
         return;
     }
     assert!(len.is_power_of_two());
-    let mut evens = input.par_iter().step_by(2).copied().collect::<Vec<_>>();
-    let mut odds = input.par_iter().skip(1).step_by(2).copied().collect::<Vec<_>>();
+    let mut evens = input.iter().step_by(2).copied().collect::<Vec<_>>();
+    let mut odds = input.iter().skip(1).step_by(2).copied().collect::<Vec<_>>();
     our_fft(&mut evens);
     our_fft(&mut odds);
     let principle_angle = core::f32::consts::TAU / len as f32;
