@@ -154,9 +154,9 @@ impl eframe::App for VisualizerApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let bar_width = 5.0;
+            let bar_width = 2.0;
             for (i, &y) in self.spectrum.iter().enumerate().step_by(1) {
-                let x_pos = i as f32 * (5.0 + 2.0);
+                let x_pos = i as f32 * (bar_width + 1.0);
                 let height = y * 60.0;
                 ui.painter().rect_filled(
                     egui::Rect::from_min_size(
@@ -177,7 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     USE_RUSTFFT.store(args.rustfft, Ordering::Relaxed);
 
-    let visualizer = AudioVisualizer::new(&args.audio_file, 2048)?;
+    let visualizer = AudioVisualizer::new(&args.audio_file, 1024)?;
 
     visualizer.play_audio(&args.audio_file)?;
 
