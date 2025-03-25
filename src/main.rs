@@ -9,23 +9,26 @@ use std::cell::RefCell;
 use std::fs::File;
 use std::io::BufReader;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+
+static USE_RUSTFFT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Parser, Debug)]
 #[clap(about = "Audio visualizer that displays frequency spectrum")]
 struct Args {
+    #[arg(long)]
+    rustfft: bool,
     #[clap(value_parser)]
     audio_file: String,
 }
 
-#[allow(dead_code)]
 fn rust_fft(input: &mut [Complex<f32>]) {
     let mut planner = FftPlanner::<f32>::new();
     let f = planner.plan_fft_forward(input.len());
     f.process(input)
 }
 
-#[allow(dead_code)]
 fn our_fft(input: &mut [Complex<f32>]) {
     let len = input.len();
     if len == 1 {
@@ -50,7 +53,11 @@ fn our_fft(input: &mut [Complex<f32>]) {
 }
 
 fn fft(input: &mut [Complex<f32>]) {
-    our_fft(input);
+    if USE_RUSTFFT.load(Ordering::Relaxed) {
+        rust_fft(input)
+    } else {
+        our_fft(input)
+    }
 }
 
 #[allow(dead_code)]
@@ -74,11 +81,17 @@ impl AudioVisualizer {
         let processed_chunks: Vec<Vec<f32>> = audio_data
             .par_chunks(block_size)
             .map(|chunk| {
-                let mut input_buffer = chunk.iter().map(|&x| Complex { re: x, im: 0.0 }).collect::<Vec<_>>();
+                let mut input_buffer = chunk
+                    .iter()
+                    .map(|&x| Complex { re: x, im: 0.0 })
+                    .collect::<Vec<_>>();
                 if input_buffer.len().is_power_of_two() {
                     fft(&mut input_buffer);
                 }
-                input_buffer.iter().map(|c| (c.norm() + 1.0).ln()).collect::<Vec<f32>>()
+                input_buffer
+                    .iter()
+                    .map(|c| (c.norm() + 1.0).ln())
+                    .collect::<Vec<f32>>()
             })
             .collect();
 
@@ -150,6 +163,7 @@ impl eframe::App for VisualizerApp {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    USE_RUSTFFT.store(args.rustfft, Ordering::Relaxed);
 
     let visualizer = AudioVisualizer::new(&args.audio_file, 2048)?;
 
