@@ -29,7 +29,7 @@ fn rust_fft(input: &mut [Complex<f32>]) {
     f.process(input)
 }
 
-fn our_fft(input: &mut [Complex<f32>]) {
+fn our_fft(input: &mut [Complex<f32>], forks_left: i8) {
     let len = input.len();
     if len == 1 {
         return;
@@ -37,8 +37,17 @@ fn our_fft(input: &mut [Complex<f32>]) {
     assert!(len.is_power_of_two());
     let mut evens = input.iter().step_by(2).copied().collect::<Vec<_>>();
     let mut odds = input.iter().skip(1).step_by(2).copied().collect::<Vec<_>>();
-    our_fft(&mut evens);
-    our_fft(&mut odds);
+
+    if forks_left > 0 {
+        rayon::join(
+            || our_fft(&mut evens, forks_left - 1),
+            || our_fft(&mut odds, forks_left - 1),
+        );
+    } else {
+        our_fft(&mut evens, forks_left - 1);
+        our_fft(&mut odds, forks_left - 1);
+    }
+
     let principle_angle = core::f32::consts::TAU / len as f32;
     let principle_root = Complex::<f32> {
         re: principle_angle.cos(),
@@ -56,7 +65,10 @@ fn fft(input: &mut [Complex<f32>]) {
     if USE_RUSTFFT.load(Ordering::Relaxed) {
         rust_fft(input)
     } else {
-        our_fft(input)
+        let parallelism = thread::available_parallelism()
+            .map(|x| x.get())
+            .unwrap_or(4);
+        our_fft(input, parallelism.next_power_of_two().ilog2() as i8);
     }
 }
 
