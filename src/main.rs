@@ -1,6 +1,7 @@
 use clap::Parser;
 use eframe::egui;
 use hound::WavReader;
+use rayon::prelude::*;
 use rodio::{Decoder, OutputStream, Sink};
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
@@ -21,7 +22,6 @@ struct Args {
 fn rust_fft(input: &mut [Complex<f32>]) {
     let mut planner = FftPlanner::<f32>::new();
     let f = planner.plan_fft_forward(input.len());
-
     f.process(input)
 }
 
@@ -32,37 +32,33 @@ fn our_fft(input: &mut [Complex<f32>]) {
         return;
     }
     assert!(len.is_power_of_two());
-
-    let mut evens = input.iter().step_by(2).copied().collect::<Vec<_>>();
-    let mut odds = input.iter().skip(1).step_by(2).copied().collect::<Vec<_>>();
-
+    let mut evens = input.par_iter().step_by(2).copied().collect::<Vec<_>>();
+    let mut odds = input.par_iter().skip(1).step_by(2).copied().collect::<Vec<_>>();
     our_fft(&mut evens);
     our_fft(&mut odds);
-
     let principle_angle = core::f32::consts::TAU / len as f32;
     let principle_root = Complex::<f32> {
         re: principle_angle.cos(),
         im: principle_angle.sin(),
     };
     let mut cur_root = Complex::<f32> { re: 1.0, im: 0.0 };
-
     for i in 0..len / 2 {
         input[i] = evens[i] + cur_root * odds[i];
         input[i + len / 2] = evens[i] - cur_root * odds[i];
-
         cur_root *= principle_root;
     }
 }
 
-// swap out backing fft impl
 fn fft(input: &mut [Complex<f32>]) {
     our_fft(input);
 }
 
+#[allow(dead_code)]
 struct AudioVisualizer {
     audio_data: Vec<f32>,
     block_size: usize,
     current_position: usize,
+    processed_chunks: Vec<Vec<f32>>,
 }
 
 impl AudioVisualizer {
@@ -75,10 +71,22 @@ impl AudioVisualizer {
             .map(|s| s as f32 / 32768.0)
             .collect();
 
+        let processed_chunks: Vec<Vec<f32>> = audio_data
+            .par_chunks(block_size)
+            .map(|chunk| {
+                let mut input_buffer = chunk.iter().map(|&x| Complex { re: x, im: 0.0 }).collect::<Vec<_>>();
+                if input_buffer.len().is_power_of_two() {
+                    fft(&mut input_buffer);
+                }
+                input_buffer.iter().map(|c| (c.norm() + 1.0).ln()).collect::<Vec<f32>>()
+            })
+            .collect();
+
         Ok(AudioVisualizer {
             audio_data,
             block_size,
             current_position: 0,
+            processed_chunks,
         })
     }
 
@@ -115,22 +123,13 @@ impl eframe::App for VisualizerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut visualizer = self.visualizer.borrow_mut();
 
-        if visualizer.current_position + visualizer.block_size <= visualizer.audio_data.len() {
-            let mut input_buffer = visualizer.audio_data
-                [visualizer.current_position..visualizer.current_position + visualizer.block_size]
-                .iter()
-                .map(|x| Complex::<f32> { re: *x, im: 0.0 })
-                .collect::<Vec<_>>();
-            visualizer.current_position += visualizer.block_size;
-
-            fft(&mut input_buffer);
-
-            self.spectrum = input_buffer.iter().map(|c| (c.norm() + 1.0).ln()).collect();
+        if visualizer.current_position < visualizer.processed_chunks.len() {
+            self.spectrum = visualizer.processed_chunks[visualizer.current_position].clone();
+            visualizer.current_position += 1;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let bar_width = 5.0;
-            // let gap = 1.0;
             for (i, &y) in self.spectrum.iter().enumerate().step_by(1) {
                 let x_pos = i as f32 * (5.0 + 2.0);
                 let height = y * 60.0;
@@ -151,7 +150,9 @@ impl eframe::App for VisualizerApp {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+
     let visualizer = AudioVisualizer::new(&args.audio_file, 2048)?;
+
     visualizer.play_audio(&args.audio_file)?;
 
     let options = eframe::NativeOptions::default();
