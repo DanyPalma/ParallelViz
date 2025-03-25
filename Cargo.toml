@@ -7,7 +7,6 @@ edition = "2021"
 clap = { version = "4", features = ["derive"] }
 hound = "3"
 rustfft = "6"
-rodio = "0.17"
-eframe = "0.27"
-egui = "0.27"
+cpal = "0.15"
+egui = { version = "0.27", features = ["default_fonts"] }
 rayon = "1.8"
