@@ -1,11 +1,13 @@
 use clap::Parser;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui;
 use hound::WavReader;
 use rayon::prelude::*;
+use rodio::{Decoder, OutputStream, Sink};
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 use std::cell::RefCell;
+use std::fs::File;
+use std::io::BufReader;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -113,33 +115,17 @@ impl AudioVisualizer {
         })
     }
 
-    fn play_audio(&self, _audio_file: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or("No output device available")?;
-        let config = device.default_output_config()?;
-
-        let audio_data = self.audio_data.clone();
-        let mut sample_clock = 0f32;
-
-        let stream = device.build_output_stream(
-            &config.into(),
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                for sample in data.iter_mut() {
-                    *sample = if sample_clock as usize >= audio_data.len() {
-                        0.0
-                    } else {
-                        audio_data[sample_clock as usize]
-                    };
-                    sample_clock += 1.0;
-                }
-            },
-            |err| eprintln!("Audio stream error: {}", err),
-            None,
-        )?;
-
-        stream.play()?;
+    fn play_audio(&self, audio_file: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let audio_file = audio_file.to_string();
+        thread::spawn(move || {
+            let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+            let sink = Sink::try_new(&stream_handle).unwrap();
+            let file = File::open(audio_file).unwrap();
+            let source = Decoder::new(BufReader::new(file)).unwrap();
+            sink.append(source);
+            sink.play();
+            sink.sleep_until_end();
+        });
         Ok(())
     }
 }
